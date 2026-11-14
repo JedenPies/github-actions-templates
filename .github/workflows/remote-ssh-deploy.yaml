@@ -1,0 +1,72 @@
+name: Reusable SSH Deploy
+
+on:
+  workflow_call:
+    inputs:
+      target_dir:
+        required: true
+        type: string
+      compose_file:
+        required: true
+        type: string
+      branch:
+        required: true
+        type: string
+      environment_name:
+        required: true
+        type: string
+      pre_deploy_commands:
+        description: 'Optional shell commands to run on VPS before deploy (e.g. create networks)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      SSH_HOST:
+        required: true
+      SSH_USER:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment_name }}
+
+    steps:
+      - name: Input and configuration validation
+        run: |
+          if [ -z "${{ vars.TARGET_DIR }}" ] || [ -z "${{ vars.COMPOSE_FILE }}" ]; then
+            echo "::error::Required variables TARGET_DIR or COMPOSE_FILE are missing!"
+            exit 1
+          fi
+
+      - name: Code checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |            
+            ${{ inputs.pre_deploy_commands }}
+
+            TARGET_DIR="${{ vars.TARGET_DIR }}"
+            COMPOSE_FILE="${{ vars.COMPOSE_FILE }}"
+            TARGET_BRANCH="${{ inputs.branch }}"
+
+            echo "Deploying branch: $TARGET_BRANCH to $TARGET_DIR"
+
+            cd "$TARGET_DIR"
+            git fetch origin "$TARGET_BRANCH"
+            git checkout "$TARGET_BRANCH"
+            git reset --hard "origin/$TARGET_BRANCH"
+
+            docker compose -f docker-compose.yml -f "$COMPOSE_FILE" up -d --build
+            docker image prune -f
